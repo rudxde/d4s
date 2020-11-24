@@ -12,6 +12,7 @@
         "strictPropertyInitialization": true,
         "esModuleInterop": true,
         "resolveJsonModule": true,
+        "sourceMap": true,
         "typeRoots": [
             "node_modules/@types",
             "typings"

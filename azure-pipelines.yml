@@ -1,0 +1,122 @@
+# Node.js
+# Build a general Node.js project with npm.
+# Add steps that analyze code, save build artifacts, deploy, and more:
+# https://docs.microsoft.com/azure/devops/pipelines/languages/javascript
+
+trigger:
+  branches:
+    include:
+      - '*'
+  
+stages:
+  - stage: Build_and_Test
+    jobs:
+      - job: build
+        pool:
+          vmImage: 'ubuntu-latest'
+        steps:
+        - task: NodeTool@0
+          inputs:
+            versionSpec: '12.x'
+          displayName: 'Install Node.js'
+        - task: Npm@1
+          inputs:
+            command: 'ci'
+          displayName: 'Install packages'
+        - task: Npm@1
+          inputs:
+            command: 'custom'
+            customCommand: 'run build'
+          displayName: 'Build'
+        - task: Npm@1
+          inputs:
+            command: 'custom'
+            customCommand: 'run lint'
+          displayName: 'Lint'
+        - task: Npm@1
+          inputs:
+            command: 'custom'
+            customCommand: 'run test:coverage'
+          displayName: 'Test'
+        - task: PublishBuildArtifacts@1
+          condition: always()
+          inputs:
+            pathtoPublish: '$(System.DefaultWorkingDirectory)/dist/'
+            artifactName: build
+        - task: PublishBuildArtifacts@1
+          condition: always()
+          inputs:
+            pathtoPublish: '$(System.DefaultWorkingDirectory)/.nyc_output/'
+            artifactName: nyc_report
+  - stage: version_update
+    dependsOn: Build_and_Test
+    condition: and(succeeded(), startsWith(variables['Build.SourceBranch'], 'refs/heads/release'))
+    jobs:
+      - job: versioning
+        pool:
+          vmImage: 'ubuntu-latest'
+        steps:
+        - checkout: self
+          clean: true
+          persistCredentials: true
+        - script: |
+            git config user.email "you@example.com"
+            git config user.name "Continuos Integration"
+        - task: Npm@1
+          condition: and(succeeded(), startsWith(variables['Build.SourceBranch'], 'refs/heads/release/patch'))
+          inputs:
+            command: 'custom'
+            customCommand: 'version patch -m "update version to %s"'
+          displayName: 'increase patch version'
+        - task: Npm@1
+          condition: and(succeeded(), startsWith(variables['Build.SourceBranch'], 'refs/heads/release/minor'))
+          inputs:
+            command: 'custom'
+            customCommand: 'version minor -m "update version to %s"'
+          displayName: 'increase minor version'
+        - task: Npm@1
+          condition: and(succeeded(), startsWith(variables['Build.SourceBranch'], 'refs/heads/release/major'))
+          inputs:
+            command: 'custom'
+            customCommand: 'version major -m "update version to %s"'
+          displayName: 'increase major version'
+        - script: "git push origin HEAD:$(Build.SourceBranch)"
+          condition: and(succeeded(), not(startsWith(variables['Build.SourceVersionMessage'], 'update version to ')))
+          displayName: "push changes"
+  - stage: Publish
+    dependsOn: Build_and_Test
+    condition: and(succeeded(), eq(variables['build.sourceBranch'], 'refs/heads/master'))
+    jobs:
+    - deployment: npm_release
+      environment: release
+      strategy: 
+        runOnce:
+          deploy:
+            pool:
+              vmImage: 'ubuntu-latest'
+            steps:
+            - checkout: self
+              clean: true
+            - task: NodeTool@0
+              inputs:
+                versionSpec: '12.x'
+              displayName: 'Install Node.js'
+            - task: Npm@1
+              inputs:
+                command: 'ci'
+              displayName: 'Install packages'
+            - task: Npm@1
+              inputs:
+                command: 'custom'
+                customCommand: 'run build'
+              displayName: 'Build'
+            - script: |
+                cp package.json dist/package.json
+                cp readme.md dist/readme.md
+              displayName: 'copy readme.md & package.json'
+            - task: Npm@1
+              inputs:
+                command: 'publish'
+                workingDir: '$(System.DefaultWorkingDirectory)/dist/'
+                publishEndpoint: 'NpmJs'
+              displayName: 'Publish on npm'
